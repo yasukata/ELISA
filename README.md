@@ -54,3 +54,19 @@ This document complements the paper "[Exit-Less, Isolated, and Shared Access for
 	- [rvs](https://github.com/yasukata/rvs): a virtual switch implementation employed for the ELISA-based VM networking system
 	- [librte_pmd_rvif](https://github.com/yasukata/librte_pmd_rvif): a DPDK poll mode driver for rvif that is the vNIC of rvs
 
+## Requirements
+
+The ELISA prototype implementations assume the following platform.
+
+- CPU: VMFUNC-capable Intel CPU
+- OS: Linux
+- Hypervisor: QEMU
+
+The authors use Ubuntu 20.04/22.04, and recommend using Ubuntu for a relatively easy setup.
+
+If you do not have QEMU on your machine, you can install it by the following command (on Ubuntu).
+
+```
+sudo apt install qemu-system-x86
+```
+
