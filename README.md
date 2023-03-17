@@ -940,3 +940,221 @@ duration 70723471 nsec (707 nsec for each)
 cnt: 18446744073609551616
 ```
 
+### Section 7.1 : VM Networking System
+
+The implementation of the ELISA-based VM networking system is [elisa-app-vmnet](https://github.com/yasukata/elisa-app-vmnet), and it consists of the following components.
+
+- The vNIC is made over the shared memory between the default and sub EPT context, and this setup is explained [below](#ivshmem-configuration-on-qemu).
+- The program run by the manager VM is [here](https://github.com/yasukata/elisa-app-vmnet/blob/4a9800ea488aa4ac9b057c3d98f04da35faefab1/server/main.c).
+- The code for the sub EPT context is [here](https://github.com/yasukata/elisa-app-vmnet/blob/4a9800ea488aa4ac9b057c3d98f04da35faefab1/server/lib/libelisa-applib-vmnet/main.c), and this involves a virtual switch implementation called [rvs](https://github.com/yasukata/rvs), which is exported for better modularity.
+- The program run by a guest VM is [the DPDK driver for rvif](https://github.com/yasukata/librte_pmd_rvif) which is a vNIC made for rvs and [a modular extension which triggers VMFUNC](https://github.com/yasukata/elisa-app-vmnet/blob/4a9800ea488aa4ac9b057c3d98f04da35faefab1/client/main.c).
+
+The behavior of the the ELISA-based VM networking system is as follows:
+- to transmit a packet, a guest VM requests the DPDK driver ([librte_pmd_rvif](https://github.com/yasukata/librte_pmd_rvif)) to transmit it, and this is done through ```rte_eth_tx_burst```, which is part of the DPDK API, invoked by a DPDK application running on the guest VM.
+- the DPDK driver [puts the packet on the I/O buffer of the vNIC](https://github.com/yasukata/librte_pmd_rvif/blob/9fbd375484cef415ea61bb6b436d509dca707c87/main.c#L276-L278).
+- then, it [triggers VMFUNC](https://github.com/yasukata/elisa-app-vmnet/blob/4a9800ea488aa4ac9b057c3d98f04da35faefab1/client/main.c#L55) to enter the sub EPT context, and this is applied through [a hook point](https://github.com/yasukata/librte_pmd_rvif/blob/9fbd375484cef415ea61bb6b436d509dca707c87/main.c#L285) in librte_pmd_rvif.
+- the execution of the sender guest VM reaches [the entry point of the virtual switch (rvs) execution](https://github.com/yasukata/elisa-app-vmnet/blob/4a9800ea488aa4ac9b057c3d98f04da35faefab1/server/lib/libelisa-applib-vmnet/main.c#L68) in the sub EPT context.
+- the virtual switch [looks up the destination of the packet](https://github.com/yasukata/rvs/blob/76a6b5d34a19af881964ef6c91155cb5ddec5847/rvs.c#L50-L58), and [copies it to the I/O buffer of the destination NIC](https://github.com/yasukata/rvs/blob/76a6b5d34a19af881964ef6c91155cb5ddec5847/rvs.c#L79-L88); this part is conceptionally similar to [VALE](https://dl.acm.org/doi/10.1145/2413176.2413185)/[mSwitch](https://dl.acm.org/doi/10.1145/2774993.2775065) that is a [netmap](https://www.usenix.org/conference/atc12/technical-sessions/presentation/rizzo)-based virtual switch, and a bit more explanation for this is found at [https://github.com/yasukata/rvs](https://github.com/yasukata/rvs).
+- afterward, the context of the sender guest VM returns to the default EPT context.
+- on the receiver side, the DPDK driver will [find the incoming packet by the vNIC index forwarded by the sender](https://github.com/yasukata/librte_pmd_rvif/blob/9fbd375484cef415ea61bb6b436d509dca707c87/main.c#L237) and let the application know it through ```rte_eth_rx_burst```, which is part of the DPDK API, invoked in the DPDK application on the guest VM.
+
+#### Files needed for elisa-app-vmnet testing
+
+For testing elisa-app-vmnet, please download the following files.
+
+```
+git clone https://github.com/yasukata/elisa-app-vmnet.git
+```
+
+```
+cd elisa-app-vmnet
+```
+
+The next step is similar to the one described in the section [Download the source code needed for elisa-app-nop](#download-the-source-code-needed-for-elisa-app-nop).
+
+```
+mkdir -p deps/elisa/lib
+```
+
+```
+mkdir -p deps/elisa/util
+```
+
+```
+git -C deps/elisa/lib clone https://github.com/yasukata/libelisa.git
+```
+
+```
+git -C deps/elisa/lib clone https://github.com/yasukata/libelisa-extra.git
+```
+
+```
+git -C deps/elisa/util clone https://github.com/yasukata/elisa-util-exec.git
+```
+
+Additionally, please download a DPDK driver for the ELISA virtual interface.
+
+```
+git -C deps clone https://github.com/yasukata/librte_pmd_rvif.git
+```
+
+#### Compilation of elisa-app-vmnet
+
+First, please build librte_pmd_rvif by the following command, which downloads the source code of the DPDK library and the virtual switch implementation [rvs](https://github.com/yasukata/rvs). For details, please see [https://github.com/yasukata/librte_pmd_rvif](https://github.com/yasukata/librte_pmd_rvif).
+
+```
+make -C deps/librte_pmd_rvif
+```
+
+Please compile libelisa and elisa-util-exec.
+
+```
+make -C deps/elisa/lib/libelisa
+```
+
+```
+make -C deps/elisa/util/elisa-util-exec
+```
+
+The following compiles the code to be executed on the manager VM.
+
+```
+make -C server
+```
+
+The following produces the shared library loaded onto the sub EPT context of a guest VM.
+
+```
+make -C server/lib/libelisa-applib-vmnet
+```
+
+At last, the following command generates the binary to be executed by a guest VM.
+
+```
+make -C client
+```
+
+#### ivshmem configuration on QEMU
+
+A virtual interface is made over the shared memory between the manager VM and a guest VM.
+
+To create the shared memory, we use the ivshmem feature of QEMU.
+
+First, please create two of 32 MB shared memory files by the following commands on the host.
+
+```
+dd if=/dev/zero of=/dev/shm/rvs_shm00 bs=1M count=0 seek=32
+```
+
+```
+dd if=/dev/zero of=/dev/shm/rvs_shm01 bs=1M count=0 seek=32
+```
+
+For the QEMU setup, we wish that the manager VM can see both of the shared memory files, and the guest VM 0 can see only rvs_shm00 and guest VM 1 can only access rvs_shm01.
+
+To achieve this setup, please add the following lines for the argument of the QEMU (```qemu-system-x86_64```) command for the manager VM, guest VM 0, guest VM 1, respectively.
+
+- manager VM
+	- /dev/shm/rvs_shm00 : ```-object memory-backend-file,size=32M,share=on,mem-path=/dev/shm/rvs_shm00,id=rvs_shm00 -device ivshmem-plain,memdev=rvs_shm00 \```
+	- /dev/shm/rvs_shm01 : ```-object memory-backend-file,size=32M,share=on,mem-path=/dev/shm/rvs_shm01,id=rvs_shm01 -device ivshmem-plain,memdev=rvs_shm01 \```
+- guest VM 0
+	- /dev/shm/rvs_shm00 : ```-object memory-backend-file,size=32M,share=on,mem-path=/dev/shm/rvs_shm00,id=rvs_shm00 -device ivshmem-plain,memdev=rvs_shm00 \```
+- guest VM 1
+	- /dev/shm/rvs_shm01 : ```-object memory-backend-file,size=32M,share=on,mem-path=/dev/shm/rvs_shm01,id=rvs_shm01 -device ivshmem-plain,memdev=rvs_shm01 \```
+
+
+#### Assumed IP address setting
+
+The current implementation employs the IP address of a guest VM as the identifier of the VM.
+
+In this example, we assume the following IP address configuration, and please change them according to your environment.
+
+- manager VM: 10.100.0.10
+- guest VM 0: 10.100.0.100
+- guest VM 1: 10.100.0.101
+
+#### The command on the manager VM for elisa-app-vmnet
+
+Before launching the ELISA program on the manager VM, on the manager VM, please type the following command to look up the PCI IDs for the attached shared memory files.
+
+```
+lspci -vvv
+```
+
+The following is the example output: in our case, the manager VM sees them at ```0000:00:02.0``` and ```0000:00:03.0```.
+
+```
+...
+00:02.0 RAM memory: Red Hat, Inc. Inter-VM shared memory (rev 01)
+        Subsystem: Red Hat, Inc. Inter-VM shared memory (QEMU Virtual Machine)
+        Control: I/O+ Mem+ BusMaster- SpecCycle- MemWINV- VGASnoop- ParErr- Stepping- SERR+ FastB2B- DisINTx-
+        Status: Cap- 66MHz- UDF- FastB2B- ParErr- DEVSEL=fast >TAbort- <TAbort- <MAbort- >SERR- <PERR- INTx-
+        Region 0: Memory at feb81000 (32-bit, non-prefetchable) [size=256]
+        Region 2: Memory at fa000000 (64-bit, prefetchable) [size=32M]
+
+00:03.0 RAM memory: Red Hat, Inc. Inter-VM shared memory (rev 01)
+        Subsystem: Red Hat, Inc. Inter-VM shared memory (QEMU Virtual Machine)
+        Control: I/O+ Mem+ BusMaster- SpecCycle- MemWINV- VGASnoop- ParErr- Stepping- SERR+ FastB2B- DisINTx-
+        Status: Cap- 66MHz- UDF- FastB2B- ParErr- DEVSEL=fast >TAbort- <TAbort- <MAbort- >SERR- <PERR- INTx-
+        Region 0: Memory at feb82000 (32-bit, non-prefetchable) [size=256]
+        Region 2: Memory at fc000000 (64-bit, prefetchable) [size=32M]
+...
+```
+
+When the manager VM has the shared memory files at ```0000:00:02.0``` and ```0000:00:03.0```, and ```0000:00:02.0``` is associated with guest VM 0 having the IP address 10.100.0.100 and ```0000:00:03.0``` is associated with guest VM 1 having IP address 10.100.0.101, the command should be as follows. Here, we assume the elisa-app-vmnet directory is located at ```/```. Please change these parameters according to your environment.
+
+
+```
+ELISA_APP_VMNET_MEM=0000:00:02.0,0000:00:03.0 ELISA_APP_VMNET_USR=10.100.0.100,10.100.0.101 ELISA_APPLIB_FILE=/elisa-app-vmnet/server/lib/libelisa-applib-vmnet/lib.so /elisa-app-vmnet/deps/elisa/util/elisa-util-exec/a.out -f /elisa-app-vmnet/server/libelisa-app-vmnet.so -p 10000
+```
+
+- ```ELISA_APP_VMNET_MEM``` is defined [here](https://github.com/yasukata/elisa-app-vmnet/blob/4a9800ea488aa4ac9b057c3d98f04da35faefab1/server/main.c#L54), and this is used for specifying the list of shared memory files through the PCI IDs.
+- ```ELISA_APP_VMNET_USR``` is defined [here](https://github.com/yasukata/elisa-app-vmnet/blob/4a9800ea488aa4ac9b057c3d98f04da35faefab1/server/main.c#L55), and this is used for specifying the list of guest VMs through the IP addresses of them. Note that the specification orders for the shared memory list and the IP address list are respected for making the mapping: in this example, ```0000:00:02.0``` is for ```10.100.0.100``` and ```0000:00:03.0``` is for ```10.100.0.101```.
+- other arguments are for elisa-util-exec and explained [above](#explanation-on-the-commands).
+
+#### The command for guest VM 0 (receiver)
+
+On guest VM 0, please first execute ```lspci``` to find the attached shared memory file.
+
+```
+00:02.0 RAM memory: Red Hat, Inc. Inter-VM shared memory (rev 01)
+        Subsystem: Red Hat, Inc. Inter-VM shared memory (QEMU Virtual Machine)
+        Control: I/O+ Mem+ BusMaster- SpecCycle- MemWINV- VGASnoop- ParErr- Stepping- SERR+ FastB2B- DisINTx-
+        Status: Cap- 66MHz- UDF- FastB2B- ParErr- DEVSEL=fast >TAbort- <TAbort- <MAbort- >SERR- <PERR- INTx-
+        Region 0: Memory at feb81000 (32-bit, non-prefetchable) [size=256]
+        Region 2: Memory at fc000000 (64-bit, prefetchable) [size=32M]
+```
+
+In this example, guest VM 0 sees it at ```0000:00:02.0```. In this case, we run the following command to execute the testpmd application for receiving packets over the ELISA-based VM networking system. Here, we assume the elisa-app-vmnet directory is located at ```/```. Please change these parameters according to your environment.
+
+
+```
+ELISA_APP_VMNET_SERVER=10.100.0.10:10000 LD_LIBRARY_PATH=/elisa-app-vmnet/deps/librte_pmd_rvif/deps/dpdk/install/lib/x86_64-linux-gnu LD_PRELOAD=/elisa-app-vmnet/deps/librte_pmd_rvif/deps/dpdk/install/lib/x86_64-linux-gnu/dpdk/pmds-23.0/librte_mempool_ring.so.23.0:/elisa-app-vmnet/client/libelisa-app-vmnet-rvif.so:/elisa-app-vmnet/deps/librte_pmd_rvif/librte_pmd_rvif.so /elisa-app-vmnet/deps/librte_pmd_rvif/deps/dpdk/install/bin/dpdk-testpmd -l 0-1 --proc-type=primary --file-prefix=pmd1 --vdev=net_rvif,mac=aa:bb:cc:dd:ee:01,mem=/sys/devices/pci0000:00/0000:00:02.0/resource2 --no-pci -- --nb-cores 1 --forward-mode=rxonly --txq=1 --rxq=1 --txd=512 --rxd=512 --stats-period=1 --txpkts=64
+```
+
+- ```ELISA_APP_VMNET_SERVER```: specifies the IP address of the manager VM.
+- ```LD_LIBRARY_PATH```: we specify this to ensure the DPDK library built by us in [librte_pmd_rvif](https://github.com/yasukata/librte_pmd_rvif) is loaded
+- ```LD_PRELOAD```: we specify this to use librte_pmd_rvif for the testpmd application and apply [the extension which triggers VMFUNC](https://github.com/yasukata/elisa-app-vmnet/blob/4a9800ea488aa4ac9b057c3d98f04da35faefab1/client/main.c).
+- others are explained in [https://github.com/yasukata/librte_pmd_rvif](https://github.com/yasukata/librte_pmd_rvif).
+
+#### The command for guest VM 1 (sender)
+
+On  guest VM 1, please execute ```lspci``` to find the attached shared memory file.
+
+```
+00:02.0 RAM memory: Red Hat, Inc. Inter-VM shared memory (rev 01)
+        Subsystem: Red Hat, Inc. Inter-VM shared memory (QEMU Virtual Machine)
+        Control: I/O+ Mem+ BusMaster- SpecCycle- MemWINV- VGASnoop- ParErr- Stepping- SERR+ FastB2B- DisINTx-
+        Status: Cap- 66MHz- UDF- FastB2B- ParErr- DEVSEL=fast >TAbort- <TAbort- <MAbort- >SERR- <PERR- INTx-
+        Region 0: Memory at feb81000 (32-bit, non-prefetchable) [size=256]
+        Region 2: Memory at fc000000 (64-bit, prefetchable) [size=32M]
+```
+
+In this example, guest VM 1 sees it at ```0000:00:02.0```. In this case, we run the following command to execute the testpmd application for sending packets over the ELISA-based VM networking system.
+
+```
+ELISA_APP_VMNET_SERVER=10.100.0.10:10000 LD_LIBRARY_PATH=/elisa-app-vmnet/deps/librte_pmd_rvif/deps/dpdk/install/lib/x86_64-linux-gnu LD_PRELOAD=/elisa-app-vmnet/deps/librte_pmd_rvif/deps/dpdk/install/lib/x86_64-linux-gnu/dpdk/pmds-23.0/librte_mempool_ring.so.23.0:/elisa-app-vmnet/client/libelisa-app-vmnet-rvif.so:/elisa-app-vmnet/deps/librte_pmd_rvif/librte_pmd_rvif.so /elisa-app-vmnet/deps/librte_pmd_rvif/deps/dpdk/install/bin/dpdk-testpmd -l 0-1 --proc-type=primary --file-prefix=pmd1 --vdev=net_rvif,mac=aa:bb:cc:dd:ee:02,mem=/sys/devices/pci0000:00/0000:00:02.0/resource2 --no-pci -- --nb-cores 1 --forward-mode=txonly --txq=1 --rxq=1 --txd=512 --rxd=512 --stats-period=1 --txpkts=64
+```
+
+The meaning of the command is same as [above](#the-command-for-the-guest-vm-0-receiver), except specifying ```--forward-mode=txonly``` to run this as the sender.
+
