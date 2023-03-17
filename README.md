@@ -553,3 +553,40 @@ The implementations of the guest hypercall functionalities are:
 - to [obtain a unique identifier of its vCPU which is used in the negotiation with the manager VM](https://github.com/yasukata/kvm-elisa/blob/0fadc257ca8a99365ba8db09d03eed431881cdd8/elisa.patch#L94-L96).
 - to [trigger the activation of the EPTP list configured by the manager VM](https://github.com/yasukata/kvm-elisa/blob/0fadc257ca8a99365ba8db09d03eed431881cdd8/elisa.patch#L97-L104).
 
+### Section 5.2 : libelisa
+
+In the current implementation, libelisa offers two primary functions: [```elisa_server```](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L577-L579) for the manager VM programming and [```elisa_client```](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/client.c#L59) for the guest VM programming; the primary [task of elisa-util-exec described in the example section](#run-elisa-app-nop) is to execute either [```elisa_server```](https://github.com/yasukata/elisa-util-exec/blob/eb8a14a132fe7f9b0e7980c7a4ab3a30ef8a465f/main.c#L67) or [```elisa_client```](https://github.com/yasukata/elisa-util-exec/blob/eb8a14a132fe7f9b0e7980c7a4ab3a30ef8a465f/main.c#L72).
+
+```elisa_server``` enters an infinite server loop, and ```elisa_client``` returns after the setup of the gate/sub EPT contexts has been completed.
+
+#### The arguments of [```elisa_server```](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L577-L579)
+
+- ```const int server_port```: the port that the manager VM listens on.
+- ```int (*server_cb)(int, uint64_t *, struct elisa_map_req **, int *, uint64_t *)```: the callback function [called during the sub EPT context setup](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L488).
+- ```int (*server_exit_cb)(uint64_t *)```: the callback function [called when a guest VM, that has a sub EPT context, exits](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L572), and this is primarily preserved to implement application-specific destructors.
+
+[```server_cb```](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L488) is the point where programmers can customize how a sub EPT context is configured, and it takes the following arguments:
+- ```int```: a socket file descriptor connected to a guest VM.
+- ```uint64_t *```: a pointer to a 64-bit variable that a programmer can use for any purpose, and passed to ```server_exit_cb```; primarily assuming to assign an identifier in ```server_cb```.
+- ```struct elisa_map_req **```: a pointer to an array of [```struct elisa_map_req```](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/include/libelisa.h) page mapping requests that libelisa assumes to be prepared by ```server_cb```; subsequently, libelisa makes page table and EPT mappings according to the requests put in this array.
+- ```int *```: number of mapping requests in the array of ```struct elisa_map_req```, set by ```server_cb```.
+- ```uint64_t *```: a virtual address of the entry point of the core function executed in the sub EPT context; this value is [embedded](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L490) to [the code of the sub EPT context](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L129).
+
+Programmers can map pages allocated in a user-space process to a sub EPT context of a guest VM, by creating an array of [```struct elisa_map_req```](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/include/libelisa.h#L61-L69).
+
+libelisa-extra has [```elisa_create_program_map_req```](https://github.com/yasukata/libelisa-extra/blob/a3ccab11ffb65c7cb5be741bdd5c0f041c40c343/include/libelisa_extra/map.h#L35-L40) which helps programmers to load a shared library file to a sub EPT context of a guest VM in ```server_cb```; elisa-app-nop [uses this](https://github.com/yasukata/elisa-app-nop/blob/bc932930c0dd07fbee61a41c968f5476a8bde981/main.c#L48-L53) to load the program to a sub EPT context.
+
+```elisa_create_program_map_req``` takes the following arguments:
+- ```const char *program_filename```: the name of the shared library file to be loaded in the sub EPT context.
+- ```uint64_t base_gpa```: the lowest GPA where the code will be located in the sub EPT context; GVA is the same as the one allocated in the process executing this on the manager VM. 
+- ```void **handle```: the handle [opened by ```dlmopen```](https://github.com/yasukata/libelisa-extra/blob/a3ccab11ffb65c7cb5be741bdd5c0f041c40c343/include/libelisa_extra/map.h#L88); this is mainly used for finding the address of the entry point of the core function. elisa-app-nop [uses this](https://github.com/yasukata/elisa-app-nop/blob/bc932930c0dd07fbee61a41c968f5476a8bde981/main.c#L57) to find the address of the entry function named [```entry_function``` in the code for the sub EPT context](https://github.com/yasukata/elisa-app-nop/blob/bc932930c0dd07fbee61a41c968f5476a8bde981/lib/libelisa-applib-nop/main.c#L19).
+- ```struct elisa_map_req **map_req```: array of the memory mapping request, particularly for the code, and [manipulated in 
+```elisa_create_program_map_req```](https://github.com/yasukata/libelisa-extra/blob/a3ccab11ffb65c7cb5be741bdd5c0f041c40c343/include/libelisa_extra/map.h#L70-L77).
+- ```int *map_req_cnt```: number of the mapping request made by ```elisa_create_program_map_req```. 
+- ```int *map_req_num```: the current length of the ```map_req``` array, that is [dynamically extended in ```elisa_create_program_map_req```](https://github.com/yasukata/libelisa-extra/blob/a3ccab11ffb65c7cb5be741bdd5c0f041c40c343/include/libelisa_extra/map.h#L63-L68).
+
+#### The arguments of [```elisa_client```](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/client.c#L59)
+- ```const char *server_addr_str```: the string specifying the address of the manager VM.
+- ```const int server_port```: the port the manager VM listens on.
+- ```int client_cb(int)```: a callback function [called during the negotiation with the manager VM](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/client.c#L75); this is preserved so that the negotiation steps can be extended for passing application-specific information through the socket file descriptor passed as the argument (int).
+
