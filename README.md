@@ -35,3 +35,22 @@ This document complements the paper "[Exit-Less, Isolated, and Shared Access for
 - Lightning talk video: [https://www.youtube.com/watch?v=oLatL6TIIa4](https://www.youtube.com/watch?v=oLatL6TIIa4)
 - Poster
 
+## List of the ELISA prototype repositories
+
+### Core components
+
+- [libelisa](https://github.com/yasukata/libelisa): the core library for ELISA
+- [libelisa-extra](https://github.com/yasukata/libelisa-extra): supplemental utilities of libelisa
+- [kvm-elisa](https://github.com/yasukata/kvm-elisa): KVM modification for ELISA
+
+### Utilities
+
+- [elisa-util-exec](https://github.com/yasukata/elisa-util-exec): a simple ELISA application launcher
+
+### Applications
+
+- [elisa-app-nop](https://github.com/yasukata/elisa-app-nop): a minimal ELISA application
+- [elisa-app-vmnet](https://github.com/yasukata/elisa-app-vmnet): an ELISA-based VM networking system
+	- [rvs](https://github.com/yasukata/rvs): a virtual switch implementation employed for the ELISA-based VM networking system
+	- [librte_pmd_rvif](https://github.com/yasukata/librte_pmd_rvif): a DPDK poll mode driver for rvif that is the vNIC of rvs
+
