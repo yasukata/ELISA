@@ -509,3 +509,31 @@ Then, we [collect the added entry value at each layer of the EPT tree](https://g
 
 Afterward, we walk through the EPT tree, and if there is an empty entry at a specific level, we [fill this entry with the collected entry value of the same level](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L315).
 
+### Section 4.2 : Gate EPT Context
+
+The implementation of the EPT context transition point (shown by Figure 5 in the paper) is divided across the default, gate, and sub EPT contexts.  
+
+#### The default EPT context
+
+A guest VM only needs to load a [12 KB code block](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/client.c#L22-L53) (4 KB x 3 : top, middle, and bottom) in its program to make an entry point.
+
+The [top 4 KB page](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/client.c#L23-L38) has the entry point to the gate EPT context, named ```elisa_gate_entry```, at the end of it.
+
+The [middle 4 KB page](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/client.c#L42-L43) is empty. (The shaded part in Figure 5.)
+
+When the execution returns from the sub EPT context, it lands at the top of the [bottom 4 KB page](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/client.c#L47-L53).
+
+#### The gate EPT context
+
+The guest VM enters the gate EPT context by executing [VMFUNC at the end of the top 4 KB page](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/client.c#L37), and lands at the top of the [middle 4 KB page](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L48-L92) in the gate EPT context; the code shown in Figure 6 is [in this middle 4 KB page](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L48-L60).
+
+The manager VM maps the EPTP list for the vCPU at the [bottom 4 KB page](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L511-L518).
+
+The manager VM conducts the page table and EPT settings for the gate EPT context [here](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L507-L532).
+
+#### The sub EPT context
+
+The middle 4 KB page of the gate EPT context contains VMFUNC and it brings the execution at [line 116](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L116) in the [middle 4 KB page](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L116-L147) of the sub EPT context.
+
+The manager VM maps the EPTP list for the vCPU at the [bottom 4 KB page](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L471).
+
