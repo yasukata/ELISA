@@ -305,3 +305,178 @@ In this case, please change the definitions in the ELISA patch accordingly by yo
 
 After you could compile the modified KVM module, you can install it using the same commands shown in [5. install the KVM module for testing](#5-install-the-kvm-module-for-testing).
 
+## Trying an example application : elisa-app-nop
+
+The [elisa-app-nop](https://github.com/yasukata/elisa-app-nop) application would be a good starting point.
+
+**As mentioned in [the WARNING section](#warning), the ELISA prototype implementations can break your entire system. Therefore, we strongly recommend trying the ELISA prototype implementations on a computer that is OK to get damaged.**
+
+### Preparation for running an ELISA-based application
+
+The example application runs on VMs that are hosted by the host installing [the KVM module including the ELISA patch](#setup).
+
+Please prepare at least one VM image that QEMU can run, in a manner you wish (e.g., virt-manager); we also recommend using Ubuntu for the VM.
+
+### Download the source code needed for elisa-app-nop
+
+Please type the following to download the source files; it is recommended to download and build the them on a VM which executes them.
+
+```
+git clone https://github.com/yasukata/elisa-app-nop.git
+```
+
+Then, please enter ```./elisa-app-nop```.
+
+```
+cd ./elisa-app-nop
+```
+
+First, please create directories in ```./elisa-app-nop``` to place the core library and utility for ELISA.
+
+```
+mkdir -p deps/elisa/lib
+```
+
+```
+mkdir -p deps/elisa/util
+```
+
+Please type the following commands to download the source code of libelisa, libelisa-extra, and elisa-util-exec.
+
+```
+git -C deps/elisa/lib clone https://github.com/yasukata/libelisa.git
+```
+
+```
+git -C deps/elisa/lib clone https://github.com/yasukata/libelisa-extra.git
+```
+
+```
+git -C deps/elisa/util clone https://github.com/yasukata/elisa-util-exec.git
+```
+
+Now, we have all assets needed to build the elisa-app-nop application.
+
+### Compilation of elisa-app-nop
+
+Let's start compilation.
+
+The following produces ```./deps/elisa/lib/libelisa/libelisa.a```.
+
+```
+make -C deps/elisa/lib/libelisa
+```
+
+The following generates ```./deps/elisa/util/elisa-util-exec/a.out```.
+
+```
+make -C deps/elisa/util/elisa-util-exec
+```
+
+The following command generates ```./lib/libelisa-applib-nop/lib.so```.
+
+```
+make -C lib/libelisa-applib-nop
+```
+
+The following command generates ```./libelisa-app-nop.so```.
+
+```
+make
+```
+
+### Run elisa-app-nop
+
+#### Note on the simplified example for elisa-app-nop
+
+- For the following example commands, to simplify the testing, we assume to use a single VM as the manager VM and the guest VM, meaning that the program made for the manager VM and the program for guest VMs run on the same VM.
+- If you have multiple VMs and wish to use one as the manager VM and the others as the guest VMs, please change the IP address passed to ```./deps/elisa/util/elisa-util-exec/a.out``` executed on a guest VM through the ```-s``` option, to specify the IP address of the manager VM. No change is needed for the command to be executed on the manager VM.
+
+#### The command for the manager VM
+
+The following command is for the manager VM. **WARNING: Do not terminate the process executing the following command while an ELISA-based application runs on a guest VM. The memory for the gate/sub EPT contexts of a guest VM is allocated from the process running the command on the manager VM; if you stop it, the memory for the gate/sub EPT contexts of the guest VM is automatically released and it results in a system failure because the guest VM accesses the released memory.**
+
+```
+sudo ELISA_APPLIB_FILE=./lib/libelisa-applib-nop/lib.so ./deps/elisa/util/elisa-util-exec/a.out -f ./libelisa-app-nop.so -p 10000
+```
+
+#### The command for a guest VM
+
+The following command is for a guest VM.
+
+```
+taskset -c 0 ./deps/elisa/util/elisa-util-exec/a.out -f ./libelisa-app-nop.so -p 10000 -s 127.0.0.1
+```
+
+#### Example output of elisa-app-nop
+
+The following is the example output seen on the guest VM.
+
+```
+$ taskset -c 0 ./deps/elisa/util/elisa-util-exec/a.out -f ./libelisa-app-nop.so -p 10000 -s 127.0.0.1
+enter sub EPT context and get a return value
+return value is 1
+```
+
+### Explanation on elisa-app-nop
+
+Up to here, we have quickly run the elisa-app-nop application.
+
+Here, we explain what happened in the steps above.
+
+#### Binary files
+
+We have generated four binary files.
+
+##### ./deps/elisa/lib/libelisa/libelisa.a
+
+```./deps/elisa/lib/libelisa/libelisa.a``` is involved by ```./deps/elisa/util/elisa-util-exec/a.out``` and ```./libelisa-app-nop.so```.
+
+##### ./lib/libelisa-applib-nop/lib.so
+
+```./lib/libelisa-applib-nop/lib.so``` contains the code executed in the sub EPT context.
+
+##### ./libelisa-app-nop.so
+
+```./libelisa-app-nop.so``` implements the application-specific logic which is nop this time, and it includes the procedure for both the manager VM and guest VMs:
+- in the manager VM side, it [loads the code](https://github.com/yasukata/elisa-app-nop/blob/bc932930c0dd07fbee61a41c968f5476a8bde981/main.c#L42-L59) specified by an environment variable [```ELISA_APPLIB_FILE```](https://github.com/yasukata/elisa-app-nop/blob/bc932930c0dd07fbee61a41c968f5476a8bde981/main.c#L29) to the sub EPT context of a guest VM, and
+- in the guest VM side, it [enters the sub EPT context and executes the code in it](https://github.com/yasukata/elisa-app-nop/blob/bc932930c0dd07fbee61a41c968f5476a8bde981/main.c#L69-L75).
+
+##### ./deps/elisa/util/elisa-util-exec/a.out
+
+```./deps/elisa/util/elisa-util-exec/a.out``` is a generic launcher application and used for executing both the commands for the manager VM and guest VMs; we note that we made ```./deps/elisa/util/elisa-util-exec/a.out``` just for reducing redundant implementations and it is not mandatory to use. 
+
+```./deps/elisa/util/elisa-util-exec/a.out``` works either in the manager VM mode or the guest VM mode; if it has an argument for ```-s``` which specifies the IP address of the manager VM, it will be the guest VM mode, and otherwise, the manager VM mode.
+
+```./deps/elisa/util/elisa-util-exec/a.out``` loads a library file specified through its ```-f``` option passes a pointer to a function named ```elisa__server_cb``` to libelisa if it is in the manager VM mode, and ```elisa__client_cb``` will be passed to libelisa if it is in the guest VM mode. The option ```-p``` specifies the port to listen on for the manager VM or connect to for a guest VM.
+
+#### Explanation on the commands
+
+The meaning of the command for the manager VM is:
+- ```sudo```: we need sudo for translating from GVA to GPA
+- ```ELISA_APPLIB_FILE=./lib/libelisa-applib-nop/lib.so```: requesting ```./libelisa-app-nop.so``` to load ```./lib/libelisa-applib-nop/lib.so``` to the sub EPT context of a guest VM.
+- ```./deps/elisa/util/elisa-util-exec/a.out```: the binary executed
+- ```-f ./libelisa-app-nop.so```: requesting ```./deps/elisa/util/elisa-util-exec/a.out``` to load ```./libelisa-app-nop.so```
+- ```-p 10000```: requesting ```./deps/elisa/util/elisa-util-exec/a.out``` to listen on port 10000
+
+The meaning of the command for the guest VM is:
+- ```taskset -c 0```: we specify the CPU affinity of the process to ensure that the negotiation with the manager VM and the execution of the code in the sub EPT context are done on the same vCPU. (The negotiation (explained in Section 5.3 of the paper) with the manager VM has to be done for each vCPU, but this implementation, particularly on the guest VM side, only performs a single negotiation with the manager VM. By modifying the implementation for the guest VM to conduct negotiation for each vCPU, we can remove this restriction.)
+- ```./deps/elisa/util/elisa-util-exec/a.out```: the binary executed
+- ```-f ./libelisa-app-nop.so```: requesting ```./deps/elisa/util/elisa-util-exec/a.out``` to load ```./libelisa-app-nop.so```
+- ```-p 10000```: requesting ```./deps/elisa/util/elisa-util-exec/a.out``` to connect to port 10000 of the manager VM
+- ```-s 127.0.0.1```: telling ```./deps/elisa/util/elisa-util-exec/a.out``` that the IP address of the manager VM is 127.0.0.1. (If you use different VMs for the manager VM and the guest VM, please change this part to specify the IP address of the manager VM.)
+
+#### Explanation of the implementations
+
+The output by printf on the guest VM comes from [line 70](https://github.com/yasukata/elisa-app-nop/blob/bc932930c0dd07fbee61a41c968f5476a8bde981/main.c#L70) and [line 74](https://github.com/yasukata/elisa-app-nop/blob/bc932930c0dd07fbee61a41c968f5476a8bde981/main.c#L74).
+
+The guest VM prints [the value obtained from the code executed in the sub EPT context](https://github.com/yasukata/elisa-app-nop/blob/bc932930c0dd07fbee61a41c968f5476a8bde981/main.c#L72).
+
+The implementation of the code for the sub EPT context is found in [elisa-app-nop/lib/libelisa-applib-nop/main.c](https://github.com/yasukata/elisa-app-nop/blob/bc932930c0dd07fbee61a41c968f5476a8bde981/lib/libelisa-applib-nop/main.c); especially, the current implementation of it [returns 1](https://github.com/yasukata/elisa-app-nop/blob/bc932930c0dd07fbee61a41c968f5476a8bde981/lib/libelisa-applib-nop/main.c#L26), therefore, we have got the output ```return value is 1```.
+
+In ```elisa-app-nop/lib/libelisa-applib-nop/main.c```, [line 71](https://github.com/yasukata/elisa-app-nop/blob/bc932930c0dd07fbee61a41c968f5476a8bde981/main.c#L71) disables interrupt and [line 73](https://github.com/yasukata/elisa-app-nop/blob/bc932930c0dd07fbee61a41c968f5476a8bde981/main.c#L73) enables interrupt; to find the reason why we need this, please refer to Section 5.6 of the paper.
+
+#### Quick experiment
+
+For a quick experiment, if you replace the return value in ```elisa-app-nop/lib/libelisa-applib-nop/main.c``` with a value that you like and recompile it, the next execution will print the value that you put.
+
