@@ -602,3 +602,9 @@ After the manager VM completes the gate/sub EPT configuration, it [acknowledges 
 
 The guest VM, that has [received the acknowledgment](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/client.c#L79), [activates the created EPTP list](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/client.c#L82) using the [guest hypercall](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/vmcall.c#L157-L162) that is [handled by the host](https://github.com/yasukata/kvm-elisa/blob/5b2e2e07dfb797d6d96474b12d57af3a40745794/elisa.patch#L97-L103).
 
+### Section 5.4 : Code for the Sub EPT Context
+
+As seen in elisa-app-nop, the code for the sub EPT context [can be implemented as a shared library](https://github.com/yasukata/elisa-app-nop/blob/bc932930c0dd07fbee61a41c968f5476a8bde981/lib/libelisa-applib-nop/main.c).
+
+To load a shared library file to a sub EPT context of a guest VM, we [use dlmopen](https://github.com/yasukata/libelisa-extra/blob/a3ccab11ffb65c7cb5be741bdd5c0f041c40c343/include/libelisa_extra/map.h#L88) in a user-space process on the manager VM so that we can avoid undesired symbol association.
+
