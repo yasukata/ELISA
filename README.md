@@ -608,3 +608,146 @@ As seen in elisa-app-nop, the code for the sub EPT context [can be implemented a
 
 To load a shared library file to a sub EPT context of a guest VM, we [use dlmopen](https://github.com/yasukata/libelisa-extra/blob/a3ccab11ffb65c7cb5be741bdd5c0f041c40c343/include/libelisa_extra/map.h#L88) in a user-space process on the manager VM so that we can avoid undesired symbol association.
 
+### Section 5.5 : Shared Memory Management
+
+The following patch extends elisa-app-nop for the demo of the shared memory management.
+
+```diff
+diff --git a/lib/libelisa-applib-nop/main.c b/lib/libelisa-applib-nop/main.c
+index dc5be09..e366883 100644
+--- a/lib/libelisa-applib-nop/main.c
++++ b/lib/libelisa-applib-nop/main.c
+@@ -16,6 +16,8 @@
+  *
+  */
+ 
++void *shm_ptr;
++
+ long entry_function(long rdi __attribute__((unused)),
+ 		    long rsi __attribute__((unused)),
+ 		    long rdx __attribute__((unused)),
+@@ -23,5 +25,6 @@ long entry_function(long rdi __attribute__((unused)),
+ 		    long r8 __attribute__((unused)),
+ 		    long r9 __attribute__((unused)))
+ {
+-	return 1;
++	unsigned long *val = (unsigned long *) shm_ptr, one = 1;
++	return __atomic_add_fetch(val, one, __ATOMIC_ACQ_REL);
+ }
+diff --git a/main.c b/main.c
+index 2a7e9f0..085c4bb 100644
+--- a/main.c
++++ b/main.c
+@@ -24,10 +24,14 @@
+ #include <libelisa_extra/map.h>
+ #include <libelisa_extra/irq.h>
+ 
++#include <sys/mman.h>
++
+ #define BASE_GPA (1UL << 37) /* TODO: ensure no-overlap with others */
+ 
+ #define ENV_APPLIB_FILE_STR "ELISA_APPLIB_FILE"
+ 
++static void *__shm_ptr;
++
+ int elisa__server_exit_cb(uint64_t *user_any __attribute__((unused)))
+ {
+ 	return 0;
+@@ -51,6 +55,25 @@ int elisa__server_cb(int sockfd __attribute__((unused)),
+ 							     map_req,
+ 							     map_req_cnt,
+ 							     &map_req_num));
++			{
++				uintptr_t *shm_ptr;
++				assert((shm_ptr = dlsym(handle, "shm_ptr")) != NULL);
++				*shm_ptr = (uintptr_t) __shm_ptr;
++			}
++			{
++				if (*map_req_cnt == map_req_num) {
++					map_req_num *= 2;
++					assert((*map_req = realloc(*map_req, sizeof(struct elisa_map_req) * map_req_num)) != NULL);
++				}
++				(*map_req)[*map_req_cnt].dst_gpa = 0x1000 * *map_req_cnt + BASE_GPA;
++				(*map_req)[*map_req_cnt].dst_gva = (uint64_t) __shm_ptr;
++				(*map_req)[*map_req_cnt].src_gxa = (uint64_t) __shm_ptr;
++				(*map_req)[*map_req_cnt].flags = 0;
++				(*map_req)[*map_req_cnt].level = 1;
++				(*map_req)[*map_req_cnt].pt_flags = PT_P | PT_W | PT_U;
++				(*map_req)[*map_req_cnt].ept_flags = EPT_R | EPT_W | /* EPT_X |*/ EPT_U | EPT_MT;
++				(*map_req_cnt)++;
++			}
+ 		}
+ 	}
+ 	assert(handle);
+@@ -66,16 +89,20 @@ int elisa__client_cb(int sockfd __attribute__((unused)))
+ 
+ int elisa__client_work(void)
+ {
+-	long ret;
+-	printf("enter sub EPT context and get a return value\n");
+-	elisa_disable_irq_if_enabled();
+-	ret = elisa_gate_entry(0, 0, 0, 511 /* rcx */, 0, 0);
++	long ret, cnt = 0;
++	while (cnt++ < 10) {
++		printf("%ld: enter sub EPT context and get a return value\n", cnt);
++		elisa_disable_irq_if_enabled();
++		ret = elisa_gate_entry(0, 0, 0, 511 /* rcx */, 0, 0);
++		printf("%ld: return value is %ld\n", cnt, ret);
++		sleep(1);
++	}
+ 	vmcall_sti();
+-	printf("return value is %ld\n", ret);
+ 	return 0;
+ }
+ 
+ int elisa__exec_init(void)
+ {
++	assert((__shm_ptr = mmap(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS | MAP_POPULATE, -1, 0)) != MAP_FAILED);
+ 	return 0;
+ }
+```
+
+The point in the patch above is that ```__shm_ptr``` is allocated by mmap with MAP_SHARED in ```elisa__exec_init``` which is called in the parent process in the manager VM, and this will be the shared memory among sub EPT contexts of guest VMs because it is exposed to the sub EPT contexts of guest VMs by child processes [forked](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L591) from the parent process on the manager VM.
+
+The code for the sub EPT context accesses the shared memory through a variable named ```shm_ptr```, and the manager VM associates ```__shm_ptr``` with it by finding the pointer to it using dlsym.
+
+The manager VM exposes the memory pointed by ```__shm_ptr``` to the sub EPT context by adding an entry to the array of ```map_req``` in ```elisa__server_cb```.
+
+#### Trying the shared memory demo
+
+To apply the patch above, please save this a file named ```./shm-demo.patch``` in the top directory of elisa-app-nop (commit id : ffb1598) and type the following commands; here, we are assuming all steps shown in the [Trying an example application : elisa-app-nop](#trying-an-example-application--elisa-app-nop) section have been completed.
+
+```
+git apply ./shm-demo.patch
+```
+
+```
+make -C lib/libelisa-applib-nop
+```
+
+```
+make
+```
+
+Please launch the process for the manager VM; the following is the same as the one shown in the [Run elisa-app-nop section](#the-command-for-the-manager-vm).
+
+```
+sudo ELISA_APPLIB_FILE=./lib/libelisa-applib-nop/lib.so ./deps/elisa/util/elisa-util-exec/a.out -f ./libelisa-app-nop.so -p 10000
+```
+
+Then, please open a new console and launch a process for a guest VM; this is also the same as the one shown in the [Run elisa-app-nop section](#the-command-for-a-guest-vm).
+
+```
+taskset -c 0 ./deps/elisa/util/elisa-util-exec/a.out -f ./libelisa-app-nop.so -p 10000 -s 127.0.0.1
+```
+
+Please open a new console and execute, on a guest VM, the following command which is mostly similar to the command above, but the only difference is the number passed to ```taskset -c``` to specify a vCPU id which is different from the one used for the process above. **WARNING: pay attention to this vCPU specification if you run the commands above and below on the same VM; if you specify a vCPU id that is already used by a different process, the guest VM will crash because of [the lazy implementation in the KVM patch](#general-information) missing a check in the EPTP list activation.** We note that the commands above assume the use of a single VM, but the proper usage is to dedicate a VM for each of the two commands above and the one below.
+
+```
+taskset -c 1 ./deps/elisa/util/elisa-util-exec/a.out -f ./libelisa-app-nop.so -p 10000 -s 127.0.0.1
+```
+
+What you supposedly see from the commands above is that each process on a guest VM increments a shared variable in the sub EPT contexts every 1 second; since the variable is shared by the two processes on the guest VM(s), in each second, the variable will be incremented by 2.
+
+When a process on a guest VM exits, the memory reserved for its gate/sub EPT contexts (e.g., the memory for the code in the sub EPT context) is released by the kernel in the manager VM; but, the memory for ```__shm_ptr```, which is the shared memory, is not released until the parent process in the manager VM exits.
+
