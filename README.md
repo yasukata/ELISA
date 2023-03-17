@@ -757,3 +757,186 @@ To control the interrupt flag, the [current implementation](https://github.com/y
 
 We assume that [```elisa_disable_irq_if_enabled```](https://github.com/yasukata/libelisa-extra/blob/a3ccab11ffb65c7cb5be741bdd5c0f041c40c343/include/libelisa_extra/irq.h#L24) in libelisa-extra is called before the every entry to the gate EPT context, for [checking the current flag register state](https://github.com/yasukata/libelisa-extra/blob/a3ccab11ffb65c7cb5be741bdd5c0f041c40c343/include/libelisa_extra/irq.h#L28-L34) and [disabling interrupts if enabled](https://github.com/yasukata/libelisa-extra/blob/a3ccab11ffb65c7cb5be741bdd5c0f041c40c343/include/libelisa_extra/irq.h#L34-L35); the typical code path only involves [pushf, pop, and cmp instructions](https://github.com/yasukata/libelisa-extra/blob/a3ccab11ffb65c7cb5be741bdd5c0f041c40c343/include/libelisa_extra/irq.h#L28-L34) and it is unlikely to [trigger the costly hypercall](https://github.com/yasukata/libelisa-extra/blob/a3ccab11ffb65c7cb5be741bdd5c0f041c40c343/include/libelisa_extra/irq.h#L35) to disable interrupts because the flag register is preserved by the kernel in the guest VM.
 
+### Section 6.1 : Context Switch Overhead
+
+#### Measuring the context round-trip time of ELISA
+
+To measure the context switch overhead of ELISA, we can use the following program which is the patch for elisa-app-nop.
+
+```diff
+diff --git a/main.c b/main.c
+index 2a7e9f0..62bf9b1 100644
+--- a/main.c
++++ b/main.c
+@@ -20,6 +20,8 @@
+ #define _GNU_SOURCE
+ #endif
+
++#include <time.h>
++
+ #include <libelisa.h>
+ #include <libelisa_extra/map.h>
+ #include <libelisa_extra/irq.h>
+@@ -66,12 +68,26 @@ int elisa__client_cb(int sockfd __attribute__((unused)))
+
+ int elisa__client_work(void)
+ {
+-	long ret;
+-	printf("enter sub EPT context and get a return value\n");
+-	elisa_disable_irq_if_enabled();
+-	ret = elisa_gate_entry(0, 0, 0, 511 /* rcx */, 0, 0);
+-	vmcall_sti();
+-	printf("return value is %ld\n", ret);
++	if (getenv("ELISA_APP_NOP_LOOPCNT")) {
++		unsigned long cnt = 0, i, loop = atol(getenv("ELISA_APP_NOP_LOOPCNT"));
++		printf("loop: %lu\n", loop);
++		{
++			unsigned long t = ({ struct timespec ts; assert(!clock_gettime(CLOCK_REALTIME, &ts)); ts.tv_sec * 1000000000UL + ts.tv_nsec; });
++			for (i = 0; i < loop; i++) {
++				elisa_disable_irq_if_enabled();
++				cnt += elisa_gate_entry(0, 0, 0, 511 /* rcx */, 0, 0);
++			}
++			{
++				unsigned long _t = ({ struct timespec ts; assert(!clock_gettime(CLOCK_REALTIME, &ts)); ts.tv_sec * 1000000000UL + ts.tv_nsec; });
++				printf("duration %lu nsec (%lu nsec for each)\n",
++						_t - t,
++						(_t - t) / loop);
++			}
++		}
++		vmcall_sti();
++		printf("cnt: %lu\n", cnt);
++	} else
++		printf("env val ELISA_APP_NOP_LOOPCNT is not specified, just exit\n");
+ 	return 0;
+ }
+```
+
+Please save the code above as ```./nop-bench.patch``` and type the following command to apply it. (If you have tried the [shared memory experiment](#section-55--shared-memory-management), please restore the state of the elisa-app-nop repository before typing the following command so that it will not involve the patch for the shared memory experiment.)
+
+```
+git apply ./nop-bench.patch
+```
+
+After the patch is applied, please type the following to compile it.
+
+```
+make
+```
+
+Then, please launch the process on the manager VM by the following command; the following is the same as the one shown in the [Run elisa-app-nop section](#the-command-for-the-manager-vm).
+
+```
+sudo ELISA_APPLIB_FILE=./lib/libelisa-applib-nop/lib.so ./deps/elisa/util/elisa-util-exec/a.out -f ./libelisa-app-nop.so -p 10000
+```
+
+On the guest VM, please type the following; this is almost the same as the one shown in the [Run elisa-app-nop section](#the-command-for-a-guest-vm), but the only difference is that this has ```ELISA_APP_NOP_LOOPCNT=100000``` to specify the number of loops.
+
+```
+ELISA_APP_NOP_LOOPCNT=100000 taskset -c 0 ./deps/elisa/util/elisa-util-exec/a.out -f ./libelisa-app-nop.so -p 10000 -s 127.0.0.1
+```
+
+The command above executes 100000 times of context round-trips between the default and sub EPT contexts and shows the average time spent on each. The following is the example output which shows it takes 198 ns for a context round-trip.
+
+```
+$ ELISA_APP_NOP_LOOPCNT=100000 taskset -c 0 ./deps/elisa/util/elisa-util-exec/a.out -f ./libelisa-app-nop.so -p 10000 -s 127.0.0.1 
+loop: 100000
+duration 19858557 nsec (198 nsec for each)
+cnt: 100000
+```
+
+We note that 100000 is small for the number of loops, and it should be increased a bit for more accurate measurement.
+
+#### Measuring the speed of VMCALL
+
+To measure the speed of a VMCALL invocation, we can use the following program.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <assert.h>
+
+void ____asm_impl_vmcall(void)
+{
+	asm volatile(
+	".globl do_vmcall \n\t"
+	"do_vmcall: \n\t"
+	"endbr64 \n\t"
+	"push %rbp \n\t"
+	"movq %rsp, %rbp \n\t"
+
+	"push %rbx \n\t"
+	"push %rcx \n\t"
+	"push %rdx \n\t"
+	"push %rsi \n\t"
+
+	/* adjust calling convention */
+	"push %r8 \n\t"  // a3
+	"push %rcx \n\t" // a2
+	"push %rdx \n\t" // a1
+	"push %rsi \n\t" // a0
+	"push %rdi \n\t" // nr
+	"pop %rax \n\t" // rax: nr
+	"pop %rbx \n\t" // rbx: a0
+	"pop %rcx \n\t" // rcx: a1
+	"pop %rdx \n\t" // rdx: a2
+	"pop %rsi \n\t" // rsi: a3
+
+	"vmcall \n\t"
+
+	"pop %rsi \n\t"
+	"pop %rdx \n\t"
+	"pop %rcx \n\t"
+	"pop %rbx \n\t"
+
+	"leaveq \n\t"
+	"retq \n\t"
+	);
+}
+
+extern long do_vmcall(long, ...);
+
+int main(void)
+{
+	if (getenv("ELISA_APP_NOP_LOOPCNT")) {
+		unsigned long cnt = 0, i, loop = atol(getenv("ELISA_APP_NOP_LOOPCNT"));
+		printf("loop: %lu\n", loop);
+		{
+			unsigned long t = ({ struct timespec ts; assert(!clock_gettime(CLOCK_REALTIME, &ts)); ts.tv_sec * 1000000000UL + ts.tv_nsec; });
+			for (i = 0; i < loop; i++)
+				cnt += do_vmcall(1000 /* KVM_HC_ELISA_UTIL */, 1 /* HC_ELISA_UTIL_DEBUG */);
+			{
+				unsigned long _t = ({ struct timespec ts; assert(!clock_gettime(CLOCK_REALTIME, &ts)); ts.tv_sec * 1000000000UL + ts.tv_nsec; });
+				printf("duration %lu nsec (%lu nsec for each)\n",
+						_t - t,
+						(_t - t) / loop);
+			}
+		}
+		printf("cnt: %lu\n", cnt);
+	} else
+		printf("env val ELISA_APP_NOP_LOOPCNT is not specified, just exit\n");
+	return 0;
+}
+```
+
+Please save the program above as ```./vcbench.c``` and please compile it by the following command.
+
+```
+gcc -O3 vcbench.c
+```
+
+The following command executes VMCALL 100000 times and shows the average time for each execution.
+
+```
+ELISA_APP_NOP_LOOPCNT=100000 ./a.out
+```
+
+The following is the example output and it shows 707 ns is spent on a VMCALL execution.
+
+```
+$ ELISA_APP_NOP_LOOPCNT=100000 ./a.out
+loop: 100000
+duration 70723471 nsec (707 nsec for each)
+cnt: 18446744073609551616
+```
+
