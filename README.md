@@ -537,3 +537,19 @@ The middle 4 KB page of the gate EPT context contains VMFUNC and it brings the e
 
 The manager VM maps the EPTP list for the vCPU at the [bottom 4 KB page](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L471).
 
+### Section 5.1 : ELISA-Specific Hypercalls
+
+The ELISA-specific hypercalls are implemented in [the patch for KVM](https://github.com/yasukata/kvm-elisa/blob/0fadc257ca8a99365ba8db09d03eed431881cdd8/elisa.patch#L113-L128).
+
+As mentioned in [general information](#general-information) for the setup, we tried to minimize the size of the patch for KVM as much as possible; for simplicity, in the current implementation, there is no clear separation between the manager and guest hypercalls, and all guest VMs can execute all ELISA-specific hypercalls.
+
+Therefore, if you wish to separate manager and guest hypercalls, you need to add some implementations for checking whether a VM, attempting a hypercall, is privileged or not.
+
+The implementations of the manager hypercall functionalities are:
+- [address translation from GPA to HPA](https://github.com/yasukata/kvm-elisa/blob/0fadc257ca8a99365ba8db09d03eed431881cdd8/elisa.patch#L42-L44); this is used by the manager VM to [translate from GVA to HPA](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/vmcall.c#L104-L110).
+- to [associate a created EPTP list with a vCPU of a guest VM](https://github.com/yasukata/kvm-elisa/blob/0fadc257ca8a99365ba8db09d03eed431881cdd8/elisa.patch#L84-L89).
+
+The implementations of the guest hypercall functionalities are:
+- to [obtain a unique identifier of its vCPU which is used in the negotiation with the manager VM](https://github.com/yasukata/kvm-elisa/blob/0fadc257ca8a99365ba8db09d03eed431881cdd8/elisa.patch#L94-L96).
+- to [trigger the activation of the EPTP list configured by the manager VM](https://github.com/yasukata/kvm-elisa/blob/0fadc257ca8a99365ba8db09d03eed431881cdd8/elisa.patch#L97-L104).
+
