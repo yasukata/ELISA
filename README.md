@@ -497,3 +497,15 @@ This commentary bridges the descriptions in the paper and the source code of the
 - [Section 6.1 : Context Switch Overhead](#section-61--context-switch-overhead)
 - [Section 7.1 : VM Networking System](#section-71--vm-networking-system)
 
+### Section 4.1 : Anywhere Page Table (APT)
+
+The implementation of APT is found at [```configure_apt```](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L304-L348), which assumes to be called at [the last step](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L383) of [an EPT context setup](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L356-L384); it fills all empty GPA entries in the EPT with the pointer to the HPA of the created page table root.
+
+The page table root for APT is allocated as [```uint64_t apt_mem[512]```](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L299) which is part of [```struct vcpu_ept_ctx```](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L298-L302) that represents an EPT context; we allocate ```struct vcpu_ept_ctx``` [on the stack](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L427-L439), and [```__attribute__((aligned(0x1000)))```](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L302) automatically instantiates ```uint64_t apt_mem[512]``` at a 4KB aligned memory address.
+
+```configure_apt``` first [creates the mapping between the last GPA in the GPA range and HPA of ```uint64_t apt_mem[512]```](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L328-L330); at the same time, and this will add an entry to each level of the EPT tree.
+
+Then, we [collect the added entry value at each layer of the EPT tree](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L336-L344), in a 64-bit integer array.
+
+Afterward, we walk through the EPT tree, and if there is an empty entry at a specific level, we [fill this entry with the collected entry value of the same level](https://github.com/yasukata/libelisa/blob/e46242e5ecd854a807f9ea1816dae3f292d5a250/server.c#L315).
+
