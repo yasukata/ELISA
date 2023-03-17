@@ -27,4 +27,11 @@ This document complements the paper "[Exit-Less, Isolated, and Shared Access for
 	- [Section 6.1 : Context Switch Overhead](#section-61--context-switch-overhead)
 	- [Section 7.1 : VM Networking System](#section-71--vm-networking-system)
 
+## Materials
+
+- Paper: [https://doi.org/10.1145/3582016.3582042](https://doi.org/10.1145/3582016.3582042)
+- Slides
+- Lightning talk slides
+- Lightning talk video: [https://www.youtube.com/watch?v=oLatL6TIIa4](https://www.youtube.com/watch?v=oLatL6TIIa4)
+- Poster
 
