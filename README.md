@@ -33,7 +33,7 @@ This document complements the paper "[Exit-Less, Isolated, and Shared Access for
 - Slides
 - Lightning talk slides: [https://yasukata.github.io/presentation/2023/03/asplos2023/asplosc23main-p814-slides-LT.pdf](https://yasukata.github.io/presentation/2023/03/asplos2023/asplosc23main-p814-slides-LT.pdf)
 - Lightning talk video: [https://www.youtube.com/watch?v=oLatL6TIIa4](https://www.youtube.com/watch?v=oLatL6TIIa4)
-- Poster
+- Poster: [https://yasukata.github.io/presentation/2023/03/asplos2023/asplosc23main-p814-poster.pdf](https://yasukata.github.io/presentation/2023/03/asplos2023/asplosc23main-p814-poster.pdf)
 
 ## List of the ELISA prototype repositories
 
