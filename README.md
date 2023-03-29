@@ -30,7 +30,7 @@ This document complements the paper "[Exit-Less, Isolated, and Shared Access for
 ## Materials
 
 - Paper: [https://doi.org/10.1145/3582016.3582042](https://doi.org/10.1145/3582016.3582042)
-- Slides
+- Slides: [https://github.com/yasukata/presentation/raw/gh-pages/2023/03/asplos2023/asplosc23main-p814-slides.pdf](https://github.com/yasukata/presentation/raw/gh-pages/2023/03/asplos2023/asplosc23main-p814-slides.pdf)
 - Lightning talk slides: [https://yasukata.github.io/presentation/2023/03/asplos2023/asplosc23main-p814-slides-LT.pdf](https://yasukata.github.io/presentation/2023/03/asplos2023/asplosc23main-p814-slides-LT.pdf)
 - Lightning talk video: [https://www.youtube.com/watch?v=oLatL6TIIa4](https://www.youtube.com/watch?v=oLatL6TIIa4)
 - Poster: [https://yasukata.github.io/presentation/2023/03/asplos2023/asplosc23main-p814-poster.pdf](https://yasukata.github.io/presentation/2023/03/asplos2023/asplosc23main-p814-poster.pdf)
