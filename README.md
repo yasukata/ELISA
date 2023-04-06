@@ -124,7 +124,7 @@ As seen above, in this case, we have the Linux source for 5.15.0-67. (**in the f
 To minimize the version mismatch between the source code and the installed Linux kernel, we install Linux 5.15.0-67 (offered by Ubuntu) by the following command. After finishing the following procedures, you need to reboot (and you may need to explicitly specify it in the GRUB menu) to load Linux 5.15.0-67.
 
 ```
-KVER=5.15.0-67-generic sudo apt install linux-image-$KVER linux-modules-$KVER linux-modules-extra-$KVER linux-headers-$KVER
+export KVER=5.15.0-67-generic; sudo apt install linux-image-$KVER linux-modules-$KVER linux-modules-extra-$KVER linux-headers-$KVER
 ```
 
 After reboot, you can confirm Linux 5.15.0-67 is properly loaded by the ```uname``` command.
