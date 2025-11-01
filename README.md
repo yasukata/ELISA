@@ -418,6 +418,12 @@ enter sub EPT context and get a return value
 return value is 1
 ```
 
+#### A note on an error
+
+If the example output above is not seen and the QEMU process immediately quits, it would be the issue of the current implementation that assumes environments based on 4-level page tables, while the 5-level page tables feature is recently supported by many CPUs and activated in Linux by default.
+
+Therefore, this error would be resolved if the ```no5lvl``` option, which requests the Linux kernel to use 4-level page tables rather than 5-level page tables, is added to the boot parameter of the guest Linux kernel.
+
 ### Explanation on elisa-app-nop
 
 Up to here, we have quickly run the elisa-app-nop application.
